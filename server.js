@@ -1,41 +1,72 @@
 const express = require('express')
-const dotenv = require('dotenv')
+const app = express()
 
+const http = require('http').createServer(app)
+const io = require('socket.io')(http)
+
+app.use(express.static(__dirname + '/public'))
+app.use(express.urlencoded({ extended: true }))
+
+const dotenv = require('dotenv')
 dotenv.config()
 const host = process.env.HOST
 const port = process.env.PORT
-const default_login_name = process.env.LOGIN_NAME
-const default_passsword = process.env.PASSWORD
 
-const app = express()
-
-//public フォルダを許可
-app.use(express.static(__dirname + '/public'))
-//URLエンコード
-app.use(express.urlencoded({ extended: true }))
-
-app.post('/auth', (req, res) => {
-    let message = 'ログインできません'
-    const login_name = req.body.login_name
-    const password = req.body.password
-    console.log(login_name)
-    console.log(password)
-
-    if (login_name == default_login_name
-        && password == default_passsword) {
-        message = 'ログインしました'
-    }
-    res.send(message)
-})
+const uuidv4 = require('uuid').v4
+let users = {}
 
 app.get('/', (req, res) => {
-    res.send('Hello YSE!!!!')
+    res.render('index.ejs')
 })
 
-app.get('/profile', (req, res) => {
-    res.send('This is profile page')
+
+io.on('connection', (socket) => {
+    socket.on('auth', (user) => {
+        //トークンがあれば処理内
+        if (user.token) return
+        //トークン発行
+        user.token = uuidv4()
+        //ユーザリスト追加
+        users[socket.id] = user
+        //data の作成
+        let data = {
+            user: user,
+            users: users,
+        }
+        console.log(data)
+        //本人にデータを返す
+        socket.emit('logined', data)
+        //本人以外すべてにデータを返す
+        socket.broadcast.emit('user_joined', data)
+    })
+
+    socket.on('message', (data) => {
+        console.log(data)
+        data.datetime = Date.now()
+        io.emit('message', data)
+    })
+
+    const logout = (socket) => {
+        //ユーザ一覧からIDでユーザ取得
+        const user = users[socket.id]
+        //ユーザ一覧から削除
+        delete users[socket.id]
+        //ログアウトユーザ以外に通知
+        socket.broadcast.emit('user_left', {
+            user: user,
+            users: users,
+        })
+    }
+
+    socket.on('logout', () => {
+        logout(socket)
+    })
+    socket.on('disconnect', () => {
+        console.log('disconnect')
+        logout(socket)
+    })
 })
 
-app.listen(port, host, () => {
+http.listen(port, host, () => {
     console.log('http://' + host + ':' + port)
 })
